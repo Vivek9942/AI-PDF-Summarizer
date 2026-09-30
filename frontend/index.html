@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>PDF Summarizer</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 700px; margin: 50px auto; padding: 20px; line-height: 1.6; }
+        h1 { color: #333; }
+        input[type="file"] { margin: 20px 0; }
+        button { background: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
+        #result { margin-top: 20px; padding: 20px; background: #f4f4f4; border-radius: 8px; }
+        #result h1, #result h2, #result h3 { margin-top: 20px; margin-bottom: 10px; }
+        #result p { margin: 10px 0; }
+        #result ul, #result ol { margin: 10px 0; padding-left: 25px; }
+        #result li { margin: 6px 0; }
+        #result table { border-collapse: collapse; margin: 15px 0; width: 100%; }
+        #result th, #result td { border: 1px solid #ccc; padding: 8px; text-align: left; }
+        #askSection { display: none; margin-top: 30px; }
+        #questionInput { width: 70%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px; }
+        #answer { margin-top: 15px; padding: 20px; background: #eef6ff; border-radius: 8px; }
+        #loading { color: #666; font-style: italic; }
+        .error { color: #b00020; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <h1>📄 AI PDF Summarizer</h1>
+    <input type="file" id="fileInput" accept=".pdf">
+    <br>
+    <button onclick="uploadPDF()">Summarize</button>
+    <div id="result"></div>
+
+    <div id="askSection">
+        <h2>💬 Ask a question about this PDF</h2>
+        <input type="text" id="questionInput" placeholder="e.g. What is a leaf node?">
+        <button onclick="askQuestion()">Ask</button>
+        <div id="answer"></div>
+    </div>
+
+    <script>
+        let currentFilename = null;
+
+       async function uploadPDF() {
+    const fileInput = document.getElementById('fileInput');
+    const resultDiv = document.getElementById('result');
+    const btn = document.querySelectorAll('button')[0];
+
+    if (!fileInput.files.length) {
+        alert("Please choose a PDF file first");
+        return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileInput.files[0]);
+
+    btn.disabled = true;
+    btn.textContent = "Summarizing...";
+    resultDiv.innerHTML = "<span id='loading'>⏳ Summarizing... large PDFs can take up to a minute, please wait</span>";
+    document.getElementById('askSection').style.display = 'none';
+    document.getElementById('answer').innerHTML = '';
+
+    try {
+                const response = await fetch('http://127.0.0.1:8000/upload', {
+                    method: 'POST',
+                    body: formData
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    currentFilename = data.filename;
+                    resultDiv.innerHTML = `<strong>Filename:</strong> ${data.filename}<hr>${marked.parse(data.summary)}`;
+                    document.getElementById('askSection').style.display = 'block';
+                } else {
+                    resultDiv.innerHTML = `<span class='error'>Error: ${data.detail || JSON.stringify(data)}</span>`;
+                }
+                       } catch (err) {
+                resultDiv.innerHTML = `<span class='error'>Error: ${err.message}</span>`;
+            } finally {
+                btn.disabled = false;
+                btn.textContent = "Summarize";
+            }
+        }
+
+        async function askQuestion() {
+            const question = document.getElementById('questionInput').value.trim();
+            const answerDiv = document.getElementById('answer');
+
+            if (!question) {
+                alert("Please type a question");
+                return;
+            }
+
+            answerDiv.innerHTML = "<span id='loading'>Thinking...</span>";
+
+            try {
+                const response = await fetch('http://127.0.0.1:8000/ask', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ filename: currentFilename, question: question })
+                });
+                const data = await response.json();
+
+                if (response.ok) {
+                    answerDiv.innerHTML = `<strong>Q:</strong> ${data.question}<hr>${marked.parse(data.answer)}`;
+                } else {
+                    answerDiv.innerHTML = `<span class='error'>Error: ${data.detail || JSON.stringify(data)}</span>`;
+                }
+            } catch (err) {
+                answerDiv.innerHTML = `<span class='error'>Error: ${err.message}</span>`;
+            }
+        }
+    </script>
+</body>
+</html>
