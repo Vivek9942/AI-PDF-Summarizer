@@ -6,9 +6,10 @@ import os
 import re
 import math
 import time
-from collections import Counter
+import numpy as np
 from dotenv import load_dotenv
 from groq import Groq
+from sentence_transformers import SentenceTransformer
 
 load_dotenv()
 
@@ -27,15 +28,12 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 MODEL = "openai/gpt-oss-20b"
 
-# filename -> {"text": full text, "chunks": list of chunks} (resets when server restarts)
+# small, fast embedding model (~80MB) — loaded once at startup
+embedder = SentenceTransformer("all-MiniLM-L6-v2")
+
+# filename -> {"text": ..., "chunks": [...], "embeddings": np.array} (resets when server restarts)
 document_store = {}
 
-STOPWORDS = {
-    "a", "an", "the", "is", "are", "was", "were", "be", "been", "of", "in", "on",
-    "at", "to", "for", "and", "or", "what", "which", "who", "how", "why", "when",
-    "does", "do", "did", "this", "that", "it", "with", "about", "from", "by",
-    "me", "tell", "explain", "give", "can", "you"
-}
 
 def clean_math_notation(text):
     """Strip LaTeX syntax, leave plain readable math."""
@@ -104,25 +102,19 @@ def chunk_text(text, chunk_size=1000, overlap=200):
     return chunks
 
 
-def find_relevant_chunks(chunks, question, top_k=4):
-    """Score each chunk by how many question words it contains, return the best ones."""
-    words = set(re.findall(r"[a-z0-9]+", question.lower())) - STOPWORDS
-    if not words:
-        return chunks[:top_k]
+def embed_chunks(chunks):
+    """Turn each chunk into a semantic vector (meaning-based, not just keywords)."""
+    return embedder.encode(chunks, normalize_embeddings=True)
 
-    scored = []
-    for i, chunk in enumerate(chunks):
-        counts = Counter(re.findall(r"[a-z0-9]+", chunk.lower()))
-        score = sum(counts[w] for w in words)
-        if score > 0:
-            scored.append((score, i))
 
-    if not scored:
-        return chunks[:top_k]
-
-    scored.sort(reverse=True)
-    best_indexes = sorted(i for _, i in scored[:top_k])  # keep original document order
-    return [chunks[i] for i in best_indexes]
+def find_relevant_chunks(chunks, chunk_embeddings, question, top_k=6):
+    """Embed the question, compare to chunk embeddings via cosine similarity."""
+    question_embedding = embedder.encode([question], normalize_embeddings=True)[0]
+    # embeddings are normalized, so dot product = cosine similarity
+    scores = np.dot(chunk_embeddings, question_embedding)
+    top_indexes = np.argsort(scores)[::-1][:top_k]
+    top_indexes = sorted(top_indexes.tolist())  # keep original document order
+    return [chunks[i] for i in top_indexes]
 
 
 def summarize_text(text):
@@ -158,8 +150,9 @@ def summarize_text(text):
         f"Combine them into a single summary:\n\n{combined}",
     )
 
-def answer_question(chunks, question):
-    relevant = find_relevant_chunks(chunks, question)
+
+def answer_question(chunks, chunk_embeddings, question):
+    relevant = find_relevant_chunks(chunks, chunk_embeddings, question)
     context = "\n\n---\n\n".join(relevant)
     answer = ask_llm(
         "You answer questions using only the provided document excerpts. "
@@ -198,7 +191,17 @@ async def upload_pdf(file: UploadFile = File(...)):
         raise HTTPException(status_code=400, detail="No text found in PDF (might be scanned/image-only)")
 
     chunks = chunk_text(text)
-    document_store[file.filename] = {"text": text, "chunks": chunks}
+
+    try:
+        chunk_embeddings = embed_chunks(chunks)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
+
+    document_store[file.filename] = {
+        "text": text,
+        "chunks": chunks,
+        "embeddings": chunk_embeddings,
+    }
 
     try:
         summary = summarize_text(text)
@@ -221,8 +224,10 @@ async def ask_question(req: AskRequest):
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
 
+    doc = document_store[req.filename]
+
     try:
-        answer, chunks_used = answer_question(document_store[req.filename]["chunks"], req.question)
+        answer, chunks_used = answer_question(doc["chunks"], doc["embeddings"], req.question)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to answer: {str(e)}")
 
