@@ -9,7 +9,7 @@ import time
 import numpy as np
 from dotenv import load_dotenv
 from groq import Groq
-from sentence_transformers import SentenceTransformer
+from fastembed import TextEmbedding
 
 load_dotenv()
 
@@ -28,8 +28,8 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 MODEL = "openai/gpt-oss-20b"
 
-# small, fast embedding model (~80MB) — loaded once at startup
-embedder = SentenceTransformer("all-MiniLM-L6-v2")
+# small, lightweight embedding model (ONNX-based, no PyTorch needed) — loaded once at startup
+embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
 
 # filename -> {"text": ..., "chunks": [...], "embeddings": np.array} (resets when server restarts)
 document_store = {}
@@ -104,13 +104,13 @@ def chunk_text(text, chunk_size=1000, overlap=200):
 
 def embed_chunks(chunks):
     """Turn each chunk into a semantic vector (meaning-based, not just keywords)."""
-    return embedder.encode(chunks, normalize_embeddings=True)
+    embeddings = list(embedder.passage_embed(chunks))
+    return np.array(embeddings)
 
 
 def find_relevant_chunks(chunks, chunk_embeddings, question, top_k=6):
     """Embed the question, compare to chunk embeddings via cosine similarity."""
-    question_embedding = embedder.encode([question], normalize_embeddings=True)[0]
-    # embeddings are normalized, so dot product = cosine similarity
+    question_embedding = list(embedder.query_embed([question]))[0]
     scores = np.dot(chunk_embeddings, question_embedding)
     top_indexes = np.argsort(scores)[::-1][:top_k]
     top_indexes = sorted(top_indexes.tolist())  # keep original document order
