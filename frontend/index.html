@@ -1,113 +1,478 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>PDF Summarizer</title>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
-    <style>
-        body { font-family: Arial, sans-serif; max-width: 700px; margin: 50px auto; padding: 20px; line-height: 1.6; }
-        h1 { color: #333; }
-        input[type="file"] { margin: 20px 0; }
-        button { background: #4CAF50; color: white; padding: 10px 20px; border: none; border-radius: 5px; cursor: pointer; font-size: 16px; }
-        #result { margin-top: 20px; padding: 20px; background: #f4f4f4; border-radius: 8px; }
-        #result h1, #result h2, #result h3 { margin-top: 20px; margin-bottom: 10px; }
-        #result p { margin: 10px 0; }
-        #result ul, #result ol { margin: 10px 0; padding-left: 25px; }
-        #result li { margin: 6px 0; }
-        #result table { border-collapse: collapse; margin: 15px 0; width: 100%; }
-        #result th, #result td { border: 1px solid #ccc; padding: 8px; text-align: left; }
-        #askSection { display: none; margin-top: 30px; }
-        #questionInput { width: 70%; padding: 10px; font-size: 16px; border: 1px solid #ccc; border-radius: 5px; }
-        #answer { margin-top: 15px; padding: 20px; background: #eef6ff; border-radius: 8px; }
-        #loading { color: #666; font-style: italic; }
-        .error { color: #b00020; font-weight: bold; }
-    </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Margin — AI Document Notes</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,500&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/9.1.2/marked.min.js"></script>
+<style>
+  :root{
+    --paper:#F6F4EE;
+    --paper-raised:#FCFBF7;
+    --ink:#1E2A3A;
+    --ink-soft:#44506080;
+    --muted:#6B6459;
+    --rule-red:#B3362E;
+    --teal:#2F6F62;
+    --teal-dim:#2F6F6214;
+    --border:#DEDACC;
+    font-size:16px;
+  }
+  *{box-sizing:border-box;}
+  body{
+    margin:0;
+    background:var(--paper);
+    color:var(--ink);
+    font-family:'Inter',system-ui,sans-serif;
+    line-height:1.55;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{
+    max-width:700px;
+    margin:0 auto;
+    padding:56px 28px 80px;
+  }
+
+  /* ---------- Header ---------- */
+  header{
+    display:flex;
+    align-items:center;
+    gap:14px;
+    margin-bottom:8px;
+  }
+  .mark{flex:none;}
+  h1{
+    font-family:'Source Serif 4',serif;
+    font-weight:700;
+    font-size:1.65rem;
+    margin:0;
+    letter-spacing:-0.01em;
+  }
+  .tagline{
+    font-family:'Source Serif 4',serif;
+    font-style:italic;
+    color:var(--muted);
+    font-size:1.02rem;
+    margin:10px 0 40px;
+    padding-left:38px;
+    max-width:46ch;
+  }
+
+  /* ---------- Upload card ---------- */
+  .dropzone{
+    position:relative;
+    background:var(--paper-raised);
+    border:1.5px dashed var(--border);
+    border-radius:4px;
+    padding:36px 28px;
+    text-align:center;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .dropzone.drag{
+    border-color:var(--rule-red);
+    background:#fff;
+  }
+  .dropzone .fold{
+    position:absolute; top:0; right:0;
+    width:0; height:0;
+    border-style:solid;
+    border-width:0 22px 22px 0;
+    border-color:transparent var(--paper) transparent transparent;
+    filter:drop-shadow(-1px 1px 1px rgba(0,0,0,.08));
+  }
+  .dz-label{
+    font-size:.95rem;
+    color:var(--muted);
+    margin-bottom:16px;
+  }
+  .filename-pill{
+    display:inline-flex;
+    align-items:center;
+    gap:8px;
+    font-family:'IBM Plex Mono',monospace;
+    font-size:.82rem;
+    color:var(--ink);
+    background:var(--teal-dim);
+    border:1px solid var(--teal);
+    padding:5px 12px;
+    border-radius:3px;
+    margin-bottom:18px;
+    max-width:100%;
+  }
+  .filename-pill span{
+    overflow:hidden;
+    text-overflow:ellipsis;
+    white-space:nowrap;
+  }
+  input[type=file]{display:none;}
+
+  .btn{
+    font-family:'Inter',sans-serif;
+    font-weight:600;
+    font-size:.92rem;
+    border:none;
+    border-radius:3px;
+    padding:11px 22px;
+    cursor:pointer;
+    transition:transform .08s ease, opacity .15s ease;
+  }
+  .btn:active{transform:scale(.98);}
+  .btn-choose{
+    background:transparent;
+    color:var(--ink);
+    border:1.5px solid var(--ink);
+  }
+  .btn-choose:hover{background:var(--ink);color:var(--paper-raised);}
+  .btn-primary{
+    background:var(--rule-red);
+    color:#fff;
+    margin-left:10px;
+  }
+  .btn-primary:hover{opacity:.88;}
+  .btn-primary:disabled{
+    background:#C9C2B2;
+    cursor:not-allowed;
+    opacity:1;
+  }
+
+  /* ---------- Progress stages ---------- */
+  .stages{
+    display:none;
+    margin:34px 0 0;
+    padding-left:38px;
+    border-left:2px solid var(--border);
+  }
+  .stages.active{display:block;}
+  .stage{
+    position:relative;
+    padding:4px 0 4px 26px;
+    font-size:.92rem;
+    color:var(--muted);
+  }
+  .stage::before{
+    content:"";
+    position:absolute;
+    left:-39px; top:9px;
+    width:9px; height:9px;
+    border-radius:50%;
+    background:var(--border);
+    border:2px solid var(--paper);
+    box-shadow:0 0 0 2px var(--border);
+  }
+  .stage.done{color:var(--ink);}
+  .stage.done::before{background:var(--teal);box-shadow:0 0 0 2px var(--teal);}
+  .stage.live{color:var(--ink);font-weight:600;}
+  .stage.live::before{background:var(--rule-red);box-shadow:0 0 0 2px var(--rule-red);animation:pulse 1.1s ease-in-out infinite;}
+  @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+
+  /* ---------- Notes (summary) ---------- */
+  .notes{
+    display:none;
+    margin-top:46px;
+    padding-left:26px;
+    border-left:3px solid var(--rule-red);
+  }
+  .notes.show{display:block;}
+  .meta{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:.74rem;
+    color:var(--muted);
+    text-transform:uppercase;
+    letter-spacing:.04em;
+    margin-bottom:6px;
+  }
+  .doc-title{
+    font-family:'Source Serif 4',serif;
+    font-weight:600;
+    font-size:1.28rem;
+    margin:0 0 22px;
+    line-height:1.3;
+  }
+  .notes h1,.notes h2,.notes h3{
+    font-family:'Source Serif 4',serif;
+    font-weight:600;
+    margin:26px 0 10px;
+    line-height:1.3;
+  }
+  .notes h3{font-size:1.05rem;}
+  .notes p{margin:10px 0;}
+  .notes ul,.notes ol{margin:10px 0;padding-left:22px;}
+  .notes li{margin:5px 0;}
+  .notes strong{color:var(--ink);}
+  .notes table{border-collapse:collapse;margin:14px 0;width:100%;font-size:.92rem;}
+  .notes th,.notes td{border:1px solid var(--border);padding:7px 10px;text-align:left;}
+  .notes th{background:var(--paper);font-weight:600;}
+
+  /* ---------- Ask section ---------- */
+  .ask-section{
+    display:none;
+    margin-top:52px;
+    padding-top:36px;
+    border-top:1px solid var(--border);
+  }
+  .ask-section.show{display:block;}
+  .ask-section h2{
+    font-family:'Source Serif 4',serif;
+    font-weight:600;
+    font-size:1.1rem;
+    margin:0 0 18px;
+  }
+  .ask-row{
+    display:flex;
+    gap:10px;
+  }
+  .ask-row input{
+    flex:1;
+    font-family:'Inter',sans-serif;
+    font-size:.92rem;
+    padding:11px 14px;
+    border:1.5px solid var(--border);
+    border-radius:3px;
+    background:var(--paper-raised);
+    color:var(--ink);
+  }
+  .ask-row input:focus{outline:none;border-color:var(--teal);}
+  .ask-row button{white-space:nowrap;}
+
+  .qa-item{
+    margin-top:26px;
+    padding:18px 20px;
+    background:var(--paper-raised);
+    border:1px solid var(--border);
+    border-left:3px solid var(--teal);
+    border-radius:3px;
+  }
+  .qa-item .q{
+    font-weight:600;
+    font-size:.92rem;
+    margin-bottom:10px;
+  }
+  .qa-item .q::before{content:"Q  ";color:var(--rule-red);font-family:'IBM Plex Mono',monospace;font-weight:500;}
+  .qa-item .a{font-size:.92rem;}
+  .qa-item .a p{margin:6px 0;}
+  .qa-item .a ul,.qa-item .a ol{margin:6px 0;padding-left:20px;}
+  .qa-item .a li{margin:4px 0;}
+
+  .error-msg{
+    margin-top:18px;
+    padding:12px 16px;
+    background:#B3362E10;
+    border:1px solid var(--rule-red);
+    border-radius:3px;
+    color:var(--rule-red);
+    font-size:.88rem;
+  }
+
+  @media (max-width:520px){
+    .wrap{padding:36px 18px 60px;}
+    .tagline{padding-left:0;}
+    .ask-row{flex-direction:column;}
+    .btn-primary{margin-left:0;margin-top:10px;}
+  }
+</style>
 </head>
 <body>
-    <h1>📄 AI PDF Summarizer</h1>
-    <input type="file" id="fileInput" accept=".pdf">
-    <br>
-    <button onclick="uploadPDF()">Summarize</button>
-    <div id="result"></div>
+<div class="wrap">
 
-    <div id="askSection">
-        <h2>💬 Ask a question about this PDF</h2>
-        <input type="text" id="questionInput" placeholder="e.g. What is a leaf node?">
-        <button onclick="askQuestion()">Ask</button>
-        <div id="answer"></div>
+  <header>
+    <svg class="mark" width="34" height="34" viewBox="0 0 34 34" fill="none">
+      <path d="M7 3h16l6 6v22H7V3z" fill="#FCFBF7" stroke="#1E2A3A" stroke-width="1.4"/>
+      <path d="M23 3v6h6" fill="none" stroke="#1E2A3A" stroke-width="1.4"/>
+      <line x1="11" y1="15" x2="25" y2="15" stroke="#B3362E" stroke-width="1.6"/>
+      <line x1="11" y1="20" x2="25" y2="20" stroke="#1E2A3A" stroke-width="1" opacity=".4"/>
+      <line x1="11" y1="24" x2="20" y2="24" stroke="#1E2A3A" stroke-width="1" opacity=".4"/>
+    </svg>
+    <h1>Margin</h1>
+  </header>
+  <p class="tagline">Turn a dense PDF into clear notes, then ask it anything.</p>
+
+  <div class="dropzone" id="dropzone">
+    <div class="fold"></div>
+    <div id="dzContent">
+      <div class="dz-label">Drop a PDF here, or</div>
+      <button class="btn btn-choose" id="chooseBtn" type="button">Choose file</button>
+      <input type="file" id="fileInput" accept=".pdf">
     </div>
+  </div>
 
-    <script>
-        let currentFilename = null;
+  <div id="actionRow" style="display:none;margin-top:18px;">
+    <div class="filename-pill"><span id="pillName"></span></div>
+    <br>
+    <button class="btn btn-choose" id="chooseAgainBtn" type="button">Choose different file</button>
+    <button class="btn btn-primary" id="summarizeBtn" type="button">Summarize</button>
+  </div>
 
-       async function uploadPDF() {
-    const fileInput = document.getElementById('fileInput');
-    const resultDiv = document.getElementById('result');
-    const btn = document.querySelectorAll('button')[0];
+  <div class="stages" id="stages">
+    <div class="stage" data-stage="read">Reading the document</div>
+    <div class="stage" data-stage="find">Finding the key points</div>
+    <div class="stage" data-stage="write">Writing the notes</div>
+  </div>
 
-    if (!fileInput.files.length) {
-        alert("Please choose a PDF file first");
-        return;
+  <div id="errorBox"></div>
+
+  <div class="notes" id="notes">
+    <div class="meta" id="metaLine"></div>
+    <div class="doc-title" id="docTitle"></div>
+    <div id="summaryBody"></div>
+  </div>
+
+  <div class="ask-section" id="askSection">
+    <h2>Ask the document</h2>
+    <div class="ask-row">
+      <input type="text" id="questionInput" placeholder="e.g. Why does this matter for large numbers?">
+      <button class="btn btn-primary" id="askBtn" type="button">Ask</button>
+    </div>
+    <div id="qaList"></div>
+  </div>
+
+</div>
+
+<script>
+  const API = 'https://ai-pdf-summarizer-cesv.onrender.com';
+
+  let currentFile = null;
+  let currentFilename = null;
+
+  const dropzone = document.getElementById('dropzone');
+  const fileInput = document.getElementById('fileInput');
+  const chooseBtn = document.getElementById('chooseBtn');
+  const chooseAgainBtn = document.getElementById('chooseAgainBtn');
+  const summarizeBtn = document.getElementById('summarizeBtn');
+  const actionRow = document.getElementById('actionRow');
+  const pillName = document.getElementById('pillName');
+  const stages = document.getElementById('stages');
+  const notes = document.getElementById('notes');
+  const errorBox = document.getElementById('errorBox');
+  const askSection = document.getElementById('askSection');
+  const questionInput = document.getElementById('questionInput');
+  const askBtn = document.getElementById('askBtn');
+  const qaList = document.getElementById('qaList');
+
+  chooseBtn.addEventListener('click', () => fileInput.click());
+  chooseAgainBtn.addEventListener('click', () => fileInput.click());
+
+  fileInput.addEventListener('change', () => {
+    if (fileInput.files.length) selectFile(fileInput.files[0]);
+  });
+
+  ['dragenter','dragover'].forEach(evt =>
+    dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.add('drag'); })
+  );
+  ['dragleave','drop'].forEach(evt =>
+    dropzone.addEventListener(evt, e => { e.preventDefault(); dropzone.classList.remove('drag'); })
+  );
+  dropzone.addEventListener('drop', e => {
+    const f = e.dataTransfer.files[0];
+    if (f) selectFile(f);
+  });
+
+  function selectFile(file){
+    if (!file.name.toLowerCase().endsWith('.pdf')){
+      showError('Please choose a PDF file.');
+      return;
     }
+    currentFile = file;
+    pillName.textContent = file.name;
+    actionRow.style.display = 'block';
+    clearError();
+    notes.classList.remove('show');
+    askSection.classList.remove('show');
+    qaList.innerHTML = '';
+  }
+
+  function showError(msg){
+    errorBox.innerHTML = `<div class="error-msg">${msg}</div>`;
+  }
+  function clearError(){ errorBox.innerHTML = ''; }
+
+  function setStage(name){
+    const order = ['read','find','write'];
+    const idx = order.indexOf(name);
+    document.querySelectorAll('.stage').forEach((el,i) => {
+      el.classList.remove('live','done');
+      if (i < idx) el.classList.add('done');
+      else if (i === idx) el.classList.add('live');
+    });
+  }
+
+  summarizeBtn.addEventListener('click', async () => {
+    if (!currentFile) return;
+    clearError();
+    summarizeBtn.disabled = true;
+    summarizeBtn.textContent = 'Working…';
+    stages.classList.add('active');
+    notes.classList.remove('show');
+
+    setStage('read');
+    const stageTimer1 = setTimeout(() => setStage('find'), 1800);
+    const stageTimer2 = setTimeout(() => setStage('write'), 5000);
 
     const formData = new FormData();
-    formData.append('file', fileInput.files[0]);
-
-    btn.disabled = true;
-    btn.textContent = "Summarizing...";
-    resultDiv.innerHTML = "<span id='loading'>⏳ Summarizing... large PDFs can take up to a minute, please wait</span>";
-    document.getElementById('askSection').style.display = 'none';
-    document.getElementById('answer').innerHTML = '';
+    formData.append('file', currentFile);
 
     try {
-                const response = await fetch('https://ai-pdf-summarizer-cesv.onrender.com/upload', {
-                    method: 'POST',
-                    body: formData
-                });
-                const data = await response.json();
+      const res = await fetch(`${API}/upload`, { method:'POST', body: formData });
+      const data = await res.json();
+      clearTimeout(stageTimer1); clearTimeout(stageTimer2);
 
-                if (response.ok) {
-                    currentFilename = data.filename;
-                    resultDiv.innerHTML = `<strong>Filename:</strong> ${data.filename}<hr>${marked.parse(data.summary)}`;
-                    document.getElementById('askSection').style.display = 'block';
-                } else {
-                    resultDiv.innerHTML = `<span class='error'>Error: ${data.detail || JSON.stringify(data)}</span>`;
-                }
-                       } catch (err) {
-                resultDiv.innerHTML = `<span class='error'>Error: ${err.message}</span>`;
-            } finally {
-                btn.disabled = false;
-                btn.textContent = "Summarize";
-            }
-        }
+      if (res.ok){
+        document.querySelectorAll('.stage').forEach(el => { el.classList.remove('live'); el.classList.add('done'); });
+        currentFilename = data.filename;
+        document.getElementById('metaLine').textContent =
+          `${data.num_chars_extracted.toLocaleString()} characters · ${data.num_chunks} sections`;
+        document.getElementById('docTitle').textContent = data.filename;
+        document.getElementById('summaryBody').innerHTML = marked.parse(data.summary);
+        notes.classList.add('show');
+        askSection.classList.add('show');
+        qaList.innerHTML = '';
+      } else {
+        stages.classList.remove('active');
+        showError(data.detail || 'Something went wrong while summarizing.');
+      }
+    } catch (err){
+      clearTimeout(stageTimer1); clearTimeout(stageTimer2);
+      stages.classList.remove('active');
+      showError(err.message);
+    } finally {
+      summarizeBtn.disabled = false;
+      summarizeBtn.textContent = 'Summarize';
+    }
+  });
 
-        async function askQuestion() {
-            const question = document.getElementById('questionInput').value.trim();
-            const answerDiv = document.getElementById('answer');
+  async function ask(){
+    const q = questionInput.value.trim();
+    if (!q) return;
+    askBtn.disabled = true;
+    askBtn.textContent = '…';
 
-            if (!question) {
-                alert("Please type a question");
-                return;
-            }
+    const item = document.createElement('div');
+    item.className = 'qa-item';
+    item.innerHTML = `<div class="q">${q}</div><div class="a">Thinking…</div>`;
+    qaList.prepend(item);
+    questionInput.value = '';
 
-            answerDiv.innerHTML = "<span id='loading'>Thinking...</span>";
+    try {
+      const res = await fetch(`${API}/ask`, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ filename: currentFilename, question: q })
+      });
+      const data = await res.json();
+      item.querySelector('.a').innerHTML = res.ok
+        ? marked.parse(data.answer)
+        : `<span style="color:var(--rule-red)">${data.detail || 'Could not answer.'}</span>`;
+    } catch (err){
+      item.querySelector('.a').innerHTML = `<span style="color:var(--rule-red)">${err.message}</span>`;
+    } finally {
+      askBtn.disabled = false;
+      askBtn.textContent = 'Ask';
+    }
+  }
 
-            try {
-                const response = await fetch('https://ai-pdf-summarizer-cesv.onrender.com/ask', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ filename: currentFilename, question: question })
-                });
-                const data = await response.json();
-
-                if (response.ok) {
-                    answerDiv.innerHTML = `<strong>Q:</strong> ${data.question}<hr>${marked.parse(data.answer)}`;
-                } else {
-                    answerDiv.innerHTML = `<span class='error'>Error: ${data.detail || JSON.stringify(data)}</span>`;
-                }
-            } catch (err) {
-                answerDiv.innerHTML = `<span class='error'>Error: ${err.message}</span>`;
-            }
-        }
-    </script>
+  askBtn.addEventListener('click', ask);
+  questionInput.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
+</script>
 </body>
 </html>
