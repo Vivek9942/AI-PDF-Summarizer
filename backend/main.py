@@ -28,8 +28,11 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 MODEL = "openai/gpt-oss-20b"
 
-# small, lightweight embedding model (ONNX-based, no PyTorch needed) — loaded once at startup
-embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5")
+# small ONNX embedding model, 1 thread keeps memory low on the 512MB free tier
+embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5", threads=1)
+
+# small batches: embedding many chunks at once is what ran the server out of memory
+EMBED_BATCH_SIZE = 8
 
 # filename -> {"text": ..., "chunks": [...], "embeddings": np.array} (resets when server restarts)
 document_store = {}
@@ -103,9 +106,9 @@ def chunk_text(text, chunk_size=1000, overlap=200):
 
 
 def embed_chunks(chunks):
-    """Turn each chunk into a semantic vector (meaning-based, not just keywords)."""
-    embeddings = list(embedder.passage_embed(chunks))
-    return np.array(embeddings)
+    """Turn each chunk into a semantic vector, a few at a time to keep memory low."""
+    embeddings = list(embedder.passage_embed(chunks, batch_size=EMBED_BATCH_SIZE))
+    return np.array(embeddings, dtype=np.float32)
 
 
 def find_relevant_chunks(chunks, chunk_embeddings, question, top_k=6):

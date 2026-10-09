@@ -12,7 +12,6 @@
     --paper:#F6F4EE;
     --paper-raised:#FCFBF7;
     --ink:#1E2A3A;
-    --ink-soft:#44506080;
     --muted:#6B6459;
     --rule-red:#B3362E;
     --teal:#2F6F62;
@@ -119,6 +118,7 @@
     transition:transform .08s ease, opacity .15s ease;
   }
   .btn:active{transform:scale(.98);}
+  .btn:focus-visible{outline:2px solid var(--teal);outline-offset:2px;}
   .btn-choose{
     background:transparent;
     color:var(--ink);
@@ -166,6 +166,15 @@
   .stage.live{color:var(--ink);font-weight:600;}
   .stage.live::before{background:var(--rule-red);box-shadow:0 0 0 2px var(--rule-red);animation:pulse 1.1s ease-in-out infinite;}
   @keyframes pulse{0%,100%{opacity:1;}50%{opacity:.35;}}
+  @media (prefers-reduced-motion:reduce){
+    .stage.live::before{animation:none;}
+  }
+  .wake-hint{
+    display:none;
+    padding:2px 0 4px 26px;
+    font-size:.82rem;
+    color:var(--muted);
+  }
 
   /* ---------- Notes (summary) ---------- */
   .notes{
@@ -235,6 +244,7 @@
   }
   .ask-row input:focus{outline:none;border-color:var(--teal);}
   .ask-row button{white-space:nowrap;}
+  .ask-row .btn-primary{margin-left:0;}
 
   .qa-item{
     margin-top:26px;
@@ -254,6 +264,7 @@
   .qa-item .a p{margin:6px 0;}
   .qa-item .a ul,.qa-item .a ol{margin:6px 0;padding-left:20px;}
   .qa-item .a li{margin:4px 0;}
+  .qa-item .a .err{color:var(--rule-red);}
 
   .error-msg{
     margin-top:18px;
@@ -270,6 +281,7 @@
     .tagline{padding-left:0;}
     .ask-row{flex-direction:column;}
     .btn-primary{margin-left:0;margin-top:10px;}
+    .ask-row .btn-primary{margin-top:0;}
   }
 </style>
 </head>
@@ -277,7 +289,7 @@
 <div class="wrap">
 
   <header>
-    <svg class="mark" width="34" height="34" viewBox="0 0 34 34" fill="none">
+    <svg class="mark" width="34" height="34" viewBox="0 0 34 34" fill="none" aria-hidden="true">
       <path d="M7 3h16l6 6v22H7V3z" fill="#FCFBF7" stroke="#1E2A3A" stroke-width="1.4"/>
       <path d="M23 3v6h6" fill="none" stroke="#1E2A3A" stroke-width="1.4"/>
       <line x1="11" y1="15" x2="25" y2="15" stroke="#B3362E" stroke-width="1.6"/>
@@ -304,13 +316,15 @@
     <button class="btn btn-primary" id="summarizeBtn" type="button">Summarize</button>
   </div>
 
-  <div class="stages" id="stages">
+  <div class="stages" id="stages" aria-live="polite">
+    <div class="stage" data-stage="wake">Starting the server</div>
+    <div class="wake-hint" id="wakeHint">The free server sleeps when idle. Waking it can take up to a minute.</div>
     <div class="stage" data-stage="read">Reading the document</div>
     <div class="stage" data-stage="find">Finding the key points</div>
     <div class="stage" data-stage="write">Writing the notes</div>
   </div>
 
-  <div id="errorBox"></div>
+  <div id="errorBox" aria-live="polite"></div>
 
   <div class="notes" id="notes">
     <div class="meta" id="metaLine"></div>
@@ -331,6 +345,7 @@
 
 <script>
   const API = 'https://ai-pdf-summarizer-cesv.onrender.com';
+  const STAGES = ['wake','read','find','write'];
 
   let currentFile = null;
   let currentFilename = null;
@@ -343,12 +358,30 @@
   const actionRow = document.getElementById('actionRow');
   const pillName = document.getElementById('pillName');
   const stages = document.getElementById('stages');
+  const wakeHint = document.getElementById('wakeHint');
   const notes = document.getElementById('notes');
   const errorBox = document.getElementById('errorBox');
   const askSection = document.getElementById('askSection');
   const questionInput = document.getElementById('questionInput');
   const askBtn = document.getElementById('askBtn');
   const qaList = document.getElementById('qaList');
+
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+  /* The free host sleeps when idle. Ping it until it answers. */
+  async function wakeServer(){
+    for (let i = 0; i < 20; i++){
+      try {
+        const res = await fetch(`${API}/`, { cache: 'no-store' });
+        if (res.ok) return true;
+      } catch (e) { /* server still starting */ }
+      await sleep(3000);
+    }
+    return false;
+  }
+
+  // start waking the server the moment the page opens
+  wakeServer();
 
   chooseBtn.addEventListener('click', () => fileInput.click());
   chooseAgainBtn.addEventListener('click', () => fileInput.click());
@@ -377,20 +410,25 @@
     pillName.textContent = file.name;
     actionRow.style.display = 'block';
     clearError();
+    stages.classList.remove('active');
     notes.classList.remove('show');
     askSection.classList.remove('show');
     qaList.innerHTML = '';
   }
 
   function showError(msg){
-    errorBox.innerHTML = `<div class="error-msg">${msg}</div>`;
+    errorBox.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'error-msg';
+    div.textContent = msg;
+    errorBox.appendChild(div);
   }
   function clearError(){ errorBox.innerHTML = ''; }
 
   function setStage(name){
-    const order = ['read','find','write'];
-    const idx = order.indexOf(name);
-    document.querySelectorAll('.stage').forEach((el,i) => {
+    const idx = STAGES.indexOf(name);
+    document.querySelectorAll('.stage').forEach(el => {
+      const i = STAGES.indexOf(el.dataset.stage);
       el.classList.remove('live','done');
       if (i < idx) el.classList.add('done');
       else if (i === idx) el.classList.add('live');
@@ -404,18 +442,30 @@
     summarizeBtn.textContent = 'Working…';
     stages.classList.add('active');
     notes.classList.remove('show');
+    askSection.classList.remove('show');
 
-    setStage('read');
-    const stageTimer1 = setTimeout(() => setStage('find'), 1800);
-    const stageTimer2 = setTimeout(() => setStage('write'), 5000);
-
-    const formData = new FormData();
-    formData.append('file', currentFile);
+    const timers = [];
+    timers.push(setTimeout(() => { wakeHint.style.display = 'block'; }, 5000));
+    setStage('wake');
 
     try {
-      const res = await fetch(`${API}/upload`, { method:'POST', body: formData });
+      const awake = await wakeServer();
+      wakeHint.style.display = 'none';
+      if (!awake){
+        stages.classList.remove('active');
+        showError('The server did not respond. It may be restarting. Wait a minute and try again.');
+        return;
+      }
+
+      setStage('read');
+      timers.push(setTimeout(() => setStage('find'), 2500));
+      timers.push(setTimeout(() => setStage('write'), 7000));
+
+      const formData = new FormData();
+      formData.append('file', currentFile);
+
+      const res = await fetch(`${API}/upload`, { method: 'POST', body: formData });
       const data = await res.json();
-      clearTimeout(stageTimer1); clearTimeout(stageTimer2);
 
       if (res.ok){
         document.querySelectorAll('.stage').forEach(el => { el.classList.remove('live'); el.classList.add('done'); });
@@ -432,10 +482,11 @@
         showError(data.detail || 'Something went wrong while summarizing.');
       }
     } catch (err){
-      clearTimeout(stageTimer1); clearTimeout(stageTimer2);
       stages.classList.remove('active');
-      showError(err.message);
+      showError('Lost the connection while working. The free server has limited memory and may have restarted. Try again, or use a smaller PDF.');
     } finally {
+      timers.forEach(clearTimeout);
+      wakeHint.style.display = 'none';
       summarizeBtn.disabled = false;
       summarizeBtn.textContent = 'Summarize';
     }
@@ -443,28 +494,47 @@
 
   async function ask(){
     const q = questionInput.value.trim();
-    if (!q) return;
+    if (!q || !currentFilename) return;
     askBtn.disabled = true;
     askBtn.textContent = '…';
 
     const item = document.createElement('div');
     item.className = 'qa-item';
-    item.innerHTML = `<div class="q">${q}</div><div class="a">Thinking…</div>`;
+    const qEl = document.createElement('div');
+    qEl.className = 'q';
+    qEl.textContent = q;
+    const aEl = document.createElement('div');
+    aEl.className = 'a';
+    aEl.textContent = 'Thinking…';
+    item.appendChild(qEl);
+    item.appendChild(aEl);
     qaList.prepend(item);
     questionInput.value = '';
 
+    const fail = msg => {
+      aEl.innerHTML = '';
+      const s = document.createElement('span');
+      s.className = 'err';
+      s.textContent = msg;
+      aEl.appendChild(s);
+    };
+
     try {
       const res = await fetch(`${API}/ask`, {
-        method:'POST',
-        headers:{'Content-Type':'application/json'},
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ filename: currentFilename, question: q })
       });
       const data = await res.json();
-      item.querySelector('.a').innerHTML = res.ok
-        ? marked.parse(data.answer)
-        : `<span style="color:var(--rule-red)">${data.detail || 'Could not answer.'}</span>`;
+      if (res.ok){
+        aEl.innerHTML = marked.parse(data.answer);
+      } else if (res.status === 404){
+        fail('The server restarted and lost this document. Press Summarize again to reload it.');
+      } else {
+        fail(data.detail || 'Could not answer that question.');
+      }
     } catch (err){
-      item.querySelector('.a').innerHTML = `<span style="color:var(--rule-red)">${err.message}</span>`;
+      fail('Could not reach the server. It may be restarting. Wait a moment and ask again.');
     } finally {
       askBtn.disabled = false;
       askBtn.textContent = 'Ask';
