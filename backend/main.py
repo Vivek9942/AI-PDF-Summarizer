@@ -1,11 +1,13 @@
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+from collections import OrderedDict
 import pymupdf
 import os
 import re
 import math
 import time
+import uuid
 import numpy as np
 from dotenv import load_dotenv
 from groq import Groq
@@ -22,20 +24,21 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-UPLOAD_DIR = "uploads"
-os.makedirs(UPLOAD_DIR, exist_ok=True)
-
 client = Groq(api_key=os.getenv("GROQ_API_KEY"))
 MODEL = "openai/gpt-oss-20b"
 
 # small ONNX embedding model, 1 thread keeps memory low on the 512MB free tier
 embedder = TextEmbedding(model_name="BAAI/bge-small-en-v1.5", threads=1)
 
-# small batches: embedding many chunks at once is what ran the server out of memory
-EMBED_BATCH_SIZE = 8
+# ---- limits (change these if your PDFs are bigger) ----
+MAX_UPLOAD_MB = 25      # biggest file accepted
+MAX_PAGES = 200         # most pages accepted
+MAX_DOCS = 10           # documents kept in memory; the oldest is dropped first
+EMBED_BATCH_SIZE = 8    # small batches keep memory low
 
-# filename -> {"text": ..., "chunks": [...], "embeddings": np.array} (resets when server restarts)
-document_store = {}
+# doc_id -> {"filename": ..., "chunks": [...], "embeddings": np.array}
+# lives in memory, so it resets when the server restarts
+document_store = OrderedDict()
 
 
 def clean_math_notation(text):
@@ -56,7 +59,7 @@ def clean_math_notation(text):
 
 
 class AskRequest(BaseModel):
-    filename: str
+    doc_id: str
     question: str
 
 
@@ -65,13 +68,29 @@ def read_root():
     return {"message": "PDF Summarizer backend running"}
 
 
-def extract_text_from_pdf(file_path):
-    doc = pymupdf.open(file_path)
-    text = ""
-    for page in doc:
-        text += page.get_text()
-    doc.close()
-    return text
+def extract_text_from_pdf(pdf_bytes):
+    """Read the PDF straight from memory (nothing is saved to disk).
+    Returns (text, page_count)."""
+    try:
+        doc = pymupdf.open(stream=pdf_bytes, filetype="pdf")
+    except Exception:
+        raise HTTPException(status_code=400, detail="This file could not be read as a PDF.")
+
+    try:
+        if doc.needs_pass:
+            raise HTTPException(
+                status_code=400,
+                detail="This PDF is password protected. Remove the password and try again.",
+            )
+        if doc.page_count > MAX_PAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"This PDF has {doc.page_count} pages. The limit is {MAX_PAGES}. Try a shorter section.",
+            )
+        text = "".join(page.get_text() for page in doc)
+        return text, doc.page_count
+    finally:
+        doc.close()
 
 
 def ask_llm(system_prompt, user_prompt, retries=3):
@@ -169,26 +188,30 @@ def answer_question(chunks, chunk_embeddings, question):
 
 @app.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
-    if not file.filename.lower().endswith(".pdf"):
+    filename = file.filename or "document.pdf"
+    if not filename.lower().endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files allowed")
 
-    file_path = os.path.join(UPLOAD_DIR, file.filename)
+    max_bytes = MAX_UPLOAD_MB * 1024 * 1024
 
-    try:
-        with open(file_path, "wb") as f:
-            content = await file.read()
-            if len(content) == 0:
-                raise HTTPException(status_code=400, detail="Uploaded file is empty")
-            f.write(content)
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to save file: {str(e)}")
+    # check the size before loading the file into memory
+    size = getattr(file, "size", None)
+    if size is not None and size > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"This file is larger than {MAX_UPLOAD_MB} MB. Try a smaller PDF.",
+        )
 
-    try:
-        text = extract_text_from_pdf(file_path)
-    except Exception as e:
-        raise HTTPException(status_code=400, detail=f"Failed to read PDF: {str(e)}")
+    content = await file.read()
+    if len(content) == 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty")
+    if len(content) > max_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail=f"This file is larger than {MAX_UPLOAD_MB} MB. Try a smaller PDF.",
+        )
+
+    text, page_count = extract_text_from_pdf(content)
 
     if not text.strip():
         raise HTTPException(status_code=400, detail="No text found in PDF (might be scanned/image-only)")
@@ -200,19 +223,25 @@ async def upload_pdf(file: UploadFile = File(...)):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Embedding failed: {str(e)}")
 
-    document_store[file.filename] = {
-        "text": text,
-        "chunks": chunks,
-        "embeddings": chunk_embeddings,
-    }
-
     try:
         summary = summarize_text(text)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Summarization failed: {str(e)}")
 
+    # every upload gets its own id, so two people can upload the same filename safely
+    doc_id = uuid.uuid4().hex
+    document_store[doc_id] = {
+        "filename": filename,
+        "chunks": chunks,
+        "embeddings": chunk_embeddings,
+    }
+    while len(document_store) > MAX_DOCS:
+        document_store.popitem(last=False)  # drop the oldest
+
     return {
-        "filename": file.filename,
+        "doc_id": doc_id,
+        "filename": filename,
+        "num_pages": page_count,
         "num_chars_extracted": len(text),
         "num_chunks": len(chunks),
         "summary": summary,
@@ -221,13 +250,12 @@ async def upload_pdf(file: UploadFile = File(...)):
 
 @app.post("/ask")
 async def ask_question(req: AskRequest):
-    if req.filename not in document_store:
+    doc = document_store.get(req.doc_id)
+    if doc is None:
         raise HTTPException(status_code=404, detail="Document not found. Please upload it first.")
 
     if not req.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
-
-    doc = document_store[req.filename]
 
     try:
         answer, chunks_used = answer_question(doc["chunks"], doc["embeddings"], req.question)
