@@ -285,6 +285,39 @@
     font-size:.88rem;
   }
 
+  .toolbar{
+    display:flex;
+    flex-wrap:wrap;
+    align-items:center;
+    gap:8px;
+    margin:0 0 20px;
+  }
+  .btn-small{
+    padding:6px 12px;
+    font-size:.8rem;
+    background:var(--paper-raised);
+    color:var(--ink);
+    border:1.5px solid var(--border);
+  }
+  .btn-small:hover{border-color:var(--ink);}
+  .toolbar-status{
+    font-size:.8rem;
+    color:var(--teal);
+    min-height:1em;
+  }
+  .print-only{display:none;}
+
+  @media print{
+    body{background:#fff;}
+    .wrap{max-width:none;padding:0;}
+    header,.tagline,.dropzone,#actionRow,.stages,#errorBox,.toolbar,.ask-row{display:none !important;}
+    .ask-section:not(.has-qa){display:none !important;}
+    .ask-section h2:not(.print-only){display:none;}
+    .ask-section h2.print-only{display:block;}
+    .notes,.qa-item{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
+    .qa-item{break-inside:avoid;}
+  }
+
   @media (max-width:520px){
     .wrap{padding:36px 18px 60px;}
     .tagline{padding-left:0;}
@@ -336,6 +369,12 @@
   <div id="errorBox" aria-live="polite"></div>
 
   <div class="notes" id="notes">
+    <div class="toolbar">
+      <button class="btn btn-small" id="copyBtn" type="button">Copy notes</button>
+      <button class="btn btn-small" id="downloadBtn" type="button">Download .md</button>
+      <button class="btn btn-small" id="printBtn" type="button">Save as PDF</button>
+      <span class="toolbar-status" id="toolbarStatus" role="status"></span>
+    </div>
     <div class="meta" id="metaLine"></div>
     <div class="overview-note" id="overviewNote"></div>
     <div class="doc-title" id="docTitle"></div>
@@ -344,6 +383,7 @@
 
   <div class="ask-section" id="askSection">
     <h2>Ask the document</h2>
+    <h2 class="print-only">Questions and answers</h2>
     <div class="ask-row">
       <input type="text" id="questionInput" placeholder="e.g. Why does this matter for large numbers?">
       <button class="btn btn-primary" id="askBtn" type="button">Ask</button>
@@ -360,6 +400,9 @@
 
   let currentFile = null;
   let currentDocId = null;
+  let currentSummaryMd = '';
+  let currentMeta = null;   // { filename, pages, chars, mode }
+  let qaHistory = [];       // successful answers, as { q, a } in markdown
 
   const dropzone = document.getElementById('dropzone');
   const fileInput = document.getElementById('fileInput');
@@ -485,6 +528,10 @@
       if (res.ok){
         document.querySelectorAll('.stage').forEach(el => { el.classList.remove('live'); el.classList.add('done'); });
         currentDocId = data.doc_id;
+        currentSummaryMd = data.summary;
+        currentMeta = { filename: data.filename, pages: data.num_pages, chars: data.num_chars_extracted, mode: data.summary_mode };
+        qaHistory = [];
+        askSection.classList.remove('has-qa');
         document.getElementById('metaLine').textContent =
           `${data.num_pages} ${data.num_pages === 1 ? 'page' : 'pages'} · ${data.num_chars_extracted.toLocaleString()} characters`;
         document.getElementById('docTitle').textContent = data.filename;
@@ -550,6 +597,8 @@
       const data = await res.json();
       if (res.ok){
         aEl.innerHTML = marked.parse(data.answer);
+        qaHistory.push({ q: q, a: data.answer });
+        askSection.classList.add('has-qa');
       } else if (res.status === 404){
         fail('The server no longer has this document (it restarted, or made room for newer uploads). Press Summarize again to reload it.');
       } else {
@@ -562,6 +611,94 @@
       askBtn.textContent = 'Ask';
     }
   }
+
+  /* ---------- take the notes with you ---------- */
+  const toolbarStatus = document.getElementById('toolbarStatus');
+  let statusTimer = null;
+
+  function say(msg){
+    toolbarStatus.textContent = msg;
+    clearTimeout(statusTimer);
+    statusTimer = setTimeout(() => { toolbarStatus.textContent = ''; }, 2500);
+  }
+
+  function baseName(){
+    const name = (currentMeta && currentMeta.filename) || 'notes';
+    return name.replace(/\.pdf$/i, '').trim() || 'notes';
+  }
+
+  function safeFileBase(){
+    return baseName().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'notes';
+  }
+
+  function buildNotesMarkdown(){
+    const m = currentMeta;
+    const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+    const lines = [];
+    lines.push('# ' + baseName(), '');
+    lines.push('*' + m.pages + (m.pages === 1 ? ' page' : ' pages') + ' · ' + m.chars.toLocaleString('en-US') + ' characters · made with Margin on ' + date + '*', '');
+    if (m.mode === 'overview'){
+      lines.push('> Long document: this is an overview of its main topics, not a line-by-line summary.', '');
+    }
+    lines.push('## Summary', '', currentSummaryMd.trim(), '');
+    if (qaHistory.length){
+      lines.push('## Questions and answers', '');
+      qaHistory.forEach(item => {
+        lines.push('### ' + item.q.replace(/\s+/g, ' '), '', item.a.trim(), '');
+      });
+    }
+    return lines.join('\n');
+  }
+
+  function downloadNotes(){
+    if (!currentMeta) return;
+    const blob = new Blob([buildNotesMarkdown()], { type: 'text/markdown;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = safeFileBase() + '-notes.md';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function copyNotes(){
+    if (!currentMeta) return;
+    const text = buildNotesMarkdown();
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      let ok = false;
+      try { ok = document.execCommand('copy'); } catch (err) { ok = false; }
+      ta.remove();
+      if (!ok){ say('Copy failed. Try Download instead.'); return; }
+    }
+    say('Copied');
+  }
+
+  function printNotes(){
+    if (!currentMeta) return;
+    const oldTitle = document.title;
+    const restore = () => {
+      document.title = oldTitle;
+      window.removeEventListener('afterprint', restore);
+    };
+    window.addEventListener('afterprint', restore);
+    document.title = safeFileBase() + '-notes';   // the browser uses this as the PDF file name
+    window.print();
+    setTimeout(restore, 1500);
+  }
+
+  document.getElementById('copyBtn').addEventListener('click', copyNotes);
+  document.getElementById('downloadBtn').addEventListener('click', downloadNotes);
+  document.getElementById('printBtn').addEventListener('click', printNotes);
 
   askBtn.addEventListener('click', ask);
   questionInput.addEventListener('keydown', e => { if (e.key === 'Enter') ask(); });
