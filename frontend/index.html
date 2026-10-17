@@ -193,6 +193,7 @@
     margin-bottom:6px;
   }
   .doc-title{
+    overflow-wrap:break-word;
     font-family:'Source Serif 4',serif;
     font-weight:600;
     font-size:1.28rem;
@@ -208,20 +209,66 @@
     font-size:.84rem;
     color:var(--ink);
   }
-  .notes h1,.notes h2,.notes h3{
+  /* one shared look for all rendered markdown: the summary AND every answer */
+  .md{
+    font-size:.95rem;
+    line-height:1.6;
+    overflow-wrap:break-word;
+  }
+  .md > :first-child{margin-top:0;}
+  .md > :last-child{margin-bottom:0;}
+  .md h1,.md h2,.md h3,.md h4,.md h5,.md h6{
     font-family:'Source Serif 4',serif;
     font-weight:600;
-    margin:26px 0 10px;
     line-height:1.3;
+    margin:22px 0 8px;
   }
-  .notes h3{font-size:1.05rem;}
-  .notes p{margin:10px 0;}
-  .notes ul,.notes ol{margin:10px 0;padding-left:22px;}
-  .notes li{margin:5px 0;}
-  .notes strong{color:var(--ink);}
-  .notes table{border-collapse:collapse;margin:14px 0;width:100%;font-size:.92rem;}
-  .notes th,.notes td{border:1px solid var(--border);padding:7px 10px;text-align:left;}
-  .notes th{background:var(--paper);font-weight:600;}
+  .md h1{font-size:1.2rem;}
+  .md h2{font-size:1.1rem;}
+  .md h3{font-size:1.02rem;}
+  .md h4,.md h5,.md h6{font-size:.95rem;}
+  .md p{margin:8px 0;}
+  .md ul,.md ol{margin:8px 0;padding-left:22px;}
+  .md li{margin:4px 0;}
+  .md li > p{margin:2px 0;}
+  .md li > ul,.md li > ol{margin:4px 0;}
+  .md blockquote{
+    margin:10px 0;
+    padding:2px 0 2px 14px;
+    border-left:3px solid var(--border);
+    color:var(--muted);
+  }
+  .md code{
+    font-family:'IBM Plex Mono',monospace;
+    font-size:.86em;
+    background:#EFECE2;
+    padding:1px 5px;
+    border-radius:3px;
+  }
+  .md pre{
+    margin:10px 0;
+    padding:10px 12px;
+    background:#EFECE2;
+    border-radius:3px;
+    overflow-x:auto;
+  }
+  .md pre code{background:none;padding:0;}
+  .md table{
+    display:block;
+    max-width:100%;
+    overflow-x:auto;
+    border-collapse:collapse;
+    margin:12px 0;
+    font-size:.9rem;
+  }
+  .md th,.md td{
+    border:1px solid var(--border);
+    padding:6px 10px;
+    text-align:left;
+    vertical-align:top;
+  }
+  .md th{background:var(--paper);font-weight:600;}
+  .md hr{border:none;border-top:1px solid var(--border);margin:18px 0;}
 
   /* ---------- Ask section ---------- */
   .ask-section{
@@ -231,7 +278,7 @@
     border-top:1px solid var(--border);
   }
   .ask-section.show{display:block;}
-  .ask-section h2{
+  .ask-section > h2{
     font-family:'Source Serif 4',serif;
     font-weight:600;
     font-size:1.1rem;
@@ -269,10 +316,6 @@
     margin-bottom:10px;
   }
   .qa-item .q::before{content:"Q  ";color:var(--rule-red);font-family:'IBM Plex Mono',monospace;font-weight:500;}
-  .qa-item .a{font-size:.92rem;}
-  .qa-item .a p{margin:6px 0;}
-  .qa-item .a ul,.qa-item .a ol{margin:6px 0;padding-left:20px;}
-  .qa-item .a li{margin:4px 0;}
   .qa-item .a .err{color:var(--rule-red);}
 
   .error-msg{
@@ -312,10 +355,16 @@
     .wrap{max-width:none;padding:0;}
     header,.tagline,.dropzone,#actionRow,.stages,#errorBox,.toolbar,.ask-row{display:none !important;}
     .ask-section:not(.has-qa){display:none !important;}
-    .ask-section h2:not(.print-only){display:none;}
-    .ask-section h2.print-only{display:block;}
+    .notes{margin-top:0;}
+    .ask-section{border-top:none;padding-top:0;margin-top:28px;}
+    .ask-section > h2:not(.print-only){display:none;}
+    .ask-section > h2.print-only{display:block;break-after:avoid;}
     .notes,.qa-item{-webkit-print-color-adjust:exact;print-color-adjust:exact;}
     .qa-item{break-inside:avoid;}
+    .md table{display:table;width:100%;}
+    .md pre{white-space:pre-wrap;overflow:visible;}
+    .md h1,.md h2,.md h3,.md h4{break-after:avoid;}
+    .md tr,.md li{break-inside:avoid;}
   }
 
   @media (max-width:520px){
@@ -378,7 +427,7 @@
     <div class="meta" id="metaLine"></div>
     <div class="overview-note" id="overviewNote"></div>
     <div class="doc-title" id="docTitle"></div>
-    <div id="summaryBody"></div>
+    <div class="md" id="summaryBody"></div>
   </div>
 
   <div class="ask-section" id="askSection">
@@ -573,7 +622,7 @@
     qEl.className = 'q';
     qEl.textContent = q;
     const aEl = document.createElement('div');
-    aEl.className = 'a';
+    aEl.className = 'a md';
     aEl.textContent = 'Thinking…';
     item.appendChild(qEl);
     item.appendChild(aEl);
@@ -631,6 +680,30 @@
     return baseName().replace(/[^A-Za-z0-9._-]+/g, '_').replace(/^_+|_+$/g, '') || 'notes';
   }
 
+  /* Push headings down so the file keeps a clean outline: the AI text may
+     start at "# ...", but it sits under "## Summary" or "### question". */
+  function shiftHeadings(md, minLevel){
+    const lines = md.split('\n');
+    const fence = l => /^\s*(```|~~~)/.test(l);
+    const heading = l => /^#{1,6}\s+\S/.test(l);
+    let inFence = false, smallest = 7;
+    lines.forEach(l => {
+      if (fence(l)){ inFence = !inFence; return; }
+      if (!inFence && heading(l)) smallest = Math.min(smallest, l.match(/^#+/)[0].length);
+    });
+    if (smallest === 7 || smallest >= minLevel) return md;
+    const shift = minLevel - smallest;
+    inFence = false;
+    return lines.map(l => {
+      if (fence(l)){ inFence = !inFence; return l; }
+      if (!inFence && heading(l)){
+        const hashes = l.match(/^#+/)[0];
+        return '#'.repeat(Math.min(6, hashes.length + shift)) + l.slice(hashes.length);
+      }
+      return l;
+    }).join('\n');
+  }
+
   function buildNotesMarkdown(){
     const m = currentMeta;
     const date = new Date().toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
@@ -640,11 +713,11 @@
     if (m.mode === 'overview'){
       lines.push('> Long document: this is an overview of its main topics, not a line-by-line summary.', '');
     }
-    lines.push('## Summary', '', currentSummaryMd.trim(), '');
+    lines.push('## Summary', '', shiftHeadings(currentSummaryMd.trim(), 3), '');
     if (qaHistory.length){
       lines.push('## Questions and answers', '');
       qaHistory.forEach(item => {
-        lines.push('### ' + item.q.replace(/\s+/g, ' '), '', item.a.trim(), '');
+        lines.push('### ' + item.q.replace(/\s+/g, ' '), '', shiftHeadings(item.a.trim(), 4), '');
       });
     }
     return lines.join('\n');
